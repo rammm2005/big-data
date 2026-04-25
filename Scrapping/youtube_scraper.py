@@ -9,11 +9,21 @@ load_dotenv()
 # --- CONFIGURATION ---
 API_KEY = os.getenv("YOUTUBE_API_KEY")
 VIDEO_IDS = [
-    "kYfAC0Ed_Uc",  # Tulus - Hati-Hati di Jalan (Official Music Video)
-    "0kH3n3V_39c",  # Tulus - Hati-Hati di Jalan (Official Lyric Video)
+    "9II3OGZETo4",  # TULUS - Hati-Hati di Jalan (Official Music Video)
+    "_N6vSc_mT6I",  # TULUS - Hati-Hati di Jalan (Official Lyric Video)
+    "F4z8MKU3vEk",  # TULUS - Hati-Hati di Jalan (Audio)
+    "xVparsxskE0",  # Lirik Lagu
+    "1t877p-ZjEw",  # Live Performance
+    "IxdQNGYdb10",  # Lirik Gabut
+    "rGbifizKEak",  # Lirik 
+    "AyN1hiXitBk",  # Cover
+    "-Ni9jyfrbQ0",  # Karaoke Version
+    "pTAV74Xx_mY",  # Cover by Mario G. Klau
+    "UjZrPGYtIso",  # Cover by Lyodra
 ]
-MAX_RESULTS_PER_VIDEO = 1000  # Adjust as needed for Big Data project
-OUTPUT_PATH = "../data/raw_comments.csv"
+
+MAX_RESULTS_PER_VIDEO = 100000
+OUTPUT_PATH = "./data/raw_comments.csv"
 
 def get_comments(youtube, video_id, max_results):
     comments = []
