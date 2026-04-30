@@ -2,12 +2,18 @@ import os
 import pandas as pd
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
 # Load environment variables from .env file
 load_dotenv()
 
 # --- CONFIGURATION ---
 API_KEY = os.getenv("YOUTUBE_API_KEY")
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017/")
+MONGODB_DB = os.getenv("MONGODB_DB", "youtube_data")
+COLLECTION_COMMENTS = "comments"
+COLLECTION_VIDEOS = "videos"
+
 VIDEO_IDS = [
     "9II3OGZETo4",  # TULUS - Hati-Hati di Jalan (Official Music Video)
     "_N6vSc_mT6I",  # TULUS - Hati-Hati di Jalan (Official Lyric Video)
@@ -23,37 +29,73 @@ VIDEO_IDS = [
 ]
 
 MAX_RESULTS_PER_VIDEO = 100000
-OUTPUT_PATH = "./data/raw_comments.csv"
+OUTPUT_PATH = "./data/processed_comments.csv"
 
-def get_comments(youtube, video_id, max_results):
-    comments = []
+# MongoDB Setup
+try:
+    # Use pymongo 3.x compatible connection
+    client = MongoClient(MONGODB_URI)
+    db = client[MONGODB_DB]
+    print(f"Connected to MongoDB: {MONGODB_DB}")
+except Exception as e:
+    print(f"Error connecting to MongoDB: {e}")
+    exit(1)
+
+def get_video_details(youtube, video_ids):
+    """
+    Fetches metadata for the provided video IDs and saves to MongoDB.
+    """
+    print(f"\nFetching metadata for {len(video_ids)} videos...")
+    try:
+        request = youtube.videos().list(
+            part="snippet,statistics,contentDetails",
+            id=",".join(video_ids)
+        )
+        response = request.execute()
+        
+        items = response.get('items', [])
+        if items:
+            db[COLLECTION_VIDEOS].delete_many({"id": {"$in": video_ids}}) # Refresh data
+            db[COLLECTION_VIDEOS].insert_many(items)
+            print(f"  Successfully stored {len(items)} video metadata items.")
+        return items
+    except Exception as e:
+        print(f"Error fetching video details: {e}")
+        return []
+
+def get_comments_and_save_to_mongo(youtube, video_id, max_results):
+    """
+    Fetches comments from YouTube API and saves the raw JSON response items to MongoDB.
+    """
+    count = 0
+    collection = db[COLLECTION_COMMENTS]
     
     try:
-        # Initial request
         request = youtube.commentThreads().list(
             part="snippet",
             videoId=video_id,
-            maxResults=100,  # Max allowed per request
+            maxResults=100,
             textFormat="plainText"
         )
         response = request.execute()
 
-        while response and len(comments) < max_results:
-            for item in response['items']:
-                comment = item['snippet']['topLevelComment']['snippet']
-                comments.append({
-                    'video_id': video_id,
-                    'author': comment['authorDisplayName'],
-                    'comment': comment['textDisplay'],
-                    'published_at': comment['publishedAt'],
-                    'like_count': comment['likeCount']
-                })
+        while response and count < max_results:
+            items = response.get('items', [])
+            if not items:
+                break
                 
-                if len(comments) >= max_results:
-                    break
+            for item in items:
+                item['video_id'] = video_id
+            
+            if items:
+                collection.insert_many(items)
+                count += len(items)
+                print(f"  Stored {len(items)} items for {video_id} (Total: {count})")
 
-            # Check for next page
-            if 'nextPageToken' in response and len(comments) < max_results:
+            if count >= max_results:
+                break
+
+            if 'nextPageToken' in response:
                 request = youtube.commentThreads().list(
                     part="snippet",
                     videoId=video_id,
@@ -66,34 +108,59 @@ def get_comments(youtube, video_id, max_results):
                 break
                 
     except Exception as e:
-        print(f"Error fetching comments for video {video_id}: {e}")
+        print(f"Error fetching/saving comments for video {video_id}: {e}")
         
-    return comments
+    return count
+
+def export_to_csv_from_mongodb(output_path):
+    """
+    Retrieves important fields from MongoDB and saves them to a CSV file.
+    """
+    print("\nExporting processed comments to CSV...")
+    collection = db[COLLECTION_COMMENTS]
+    cursor = collection.find({})
+    
+    important_data = []
+    for doc in cursor:
+        try:
+            snippet = doc.get('snippet', {}).get('topLevelComment', {}).get('snippet', {})
+            important_data.append({
+                'video_id': doc.get('video_id'),
+                'author': snippet.get('authorDisplayName'),
+                'comment': snippet.get('textDisplay'),
+                'published_at': snippet.get('publishedAt'),
+                'like_count': snippet.get('likeCount')
+            })
+        except:
+            continue
+
+    if not important_data:
+        return
+
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    pd.DataFrame(important_data).to_csv(output_path, index=False, encoding='utf-8')
+    print(f"SUCCESS: Exported {len(important_data)} records to {output_path}")
 
 def main():
     if not API_KEY:
-        print("ERROR: YOUTUBE_API_KEY not found in environment variables.")
-        print("Please create a .env file with YOUTUBE_API_KEY=your_key")
+        print("ERROR: YOUTUBE_API_KEY not found.")
         return
 
     youtube = build("youtube", "v3", developerKey=API_KEY)
     
-    all_comments = []
+    # Step 1: Fetch Video Metadata
+    get_video_details(youtube, VIDEO_IDS)
     
+    # Step 2: Fetch Comments
+    total_stored = 0
     for v_id in VIDEO_IDS:
-        print(f"Fetching comments for video: {v_id}...")
-        comments = get_comments(youtube, v_id, MAX_RESULTS_PER_VIDEO)
-        all_comments.extend(comments)
-        print(f"Retrieved {len(comments)} comments.")
+        print(f"\nProcessing comments for video: {v_id}...")
+        count = get_comments_and_save_to_mongo(youtube, v_id, MAX_RESULTS_PER_VIDEO)
+        total_stored += count
 
-    # Create directory if it doesn't exist
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-
-    # Save to CSV
-    df = pd.DataFrame(all_comments)
-    df.to_csv(OUTPUT_PATH, index=False, encoding='utf-8')
-    
-    print(f"\nSUCCESS: Total {len(all_comments)} comments saved to {OUTPUT_PATH}")
+    # Step 3: Export
+    export_to_csv_from_mongodb(OUTPUT_PATH)
+    print(f"\nFinal Count: {total_stored} comments stored in MongoDB.")
 
 if __name__ == "__main__":
     main()
