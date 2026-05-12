@@ -1,4 +1,5 @@
 import os
+import json
 import pandas as pd
 from googleapiclient.discovery import build
 from dotenv import load_dotenv
@@ -30,6 +31,7 @@ VIDEO_IDS = [
 
 MAX_RESULTS_PER_VIDEO = 100000
 OUTPUT_PATH = "./data/processed_comments.csv"
+OUTPUT_JSON_PATH = "./data/raw_comments.json"
 
 # MongoDB Setup
 try:
@@ -112,6 +114,23 @@ def get_comments_and_save_to_mongo(youtube, video_id, max_results):
         
     return count
 
+def export_raw_to_json_from_mongodb(output_path):
+    """
+    Exports the raw (dirty) comments directly from MongoDB to a JSON file.
+    """
+    print("\nExporting raw (dirty) comments to JSON...")
+    collection = db[COLLECTION_COMMENTS]
+    # Exclude the MongoDB ObjectId since it's not JSON serializable by default
+    cursor = collection.find({}, {'_id': False})
+    
+    raw_data = list(cursor)
+    
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(raw_data, f, ensure_ascii=False, indent=4)
+        
+    print(f"SUCCESS: Exported {len(raw_data)} raw records to {output_path}")
+
 def export_to_csv_from_mongodb(output_path):
     """
     Retrieves important fields from MongoDB and saves them to a CSV file.
@@ -160,6 +179,7 @@ def main():
 
     # Step 3: Export
     export_to_csv_from_mongodb(OUTPUT_PATH)
+    export_raw_to_json_from_mongodb(OUTPUT_JSON_PATH)
     print(f"\nFinal Count: {total_stored} comments stored in MongoDB.")
 
 if __name__ == "__main__":
