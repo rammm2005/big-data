@@ -5,7 +5,6 @@ from googleapiclient.discovery import build
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
-# Load environment variables from .env file
 load_dotenv()
 
 # --- CONFIGURATION ---
@@ -29,7 +28,7 @@ VIDEO_IDS = [
     "UjZrPGYtIso",  # Cover by Lyodra
 ]
 
-MAX_RESULTS_PER_VIDEO = 100000
+MAX_RESULTS_PER_VIDEO = float('inf')
 OUTPUT_PATH = "./data/processed_comments.csv"
 OUTPUT_JSON_PATH = "./data/raw_comments.json"
 
@@ -74,7 +73,7 @@ def get_comments_and_save_to_mongo(youtube, video_id, max_results):
     
     try:
         request = youtube.commentThreads().list(
-            part="snippet",
+            part="id,snippet,replies",
             videoId=video_id,
             maxResults=100,
             textFormat="plainText"
@@ -99,7 +98,7 @@ def get_comments_and_save_to_mongo(youtube, video_id, max_results):
 
             if 'nextPageToken' in response:
                 request = youtube.commentThreads().list(
-                    part="snippet",
+                    part="id,snippet,replies",
                     videoId=video_id,
                     pageToken=response['nextPageToken'],
                     maxResults=100,
@@ -167,17 +166,17 @@ def main():
 
     youtube = build("youtube", "v3", developerKey=API_KEY)
     
-    # Step 1: Fetch Video Metadata
+    # Fetch Video Metadata
     get_video_details(youtube, VIDEO_IDS)
     
-    # Step 2: Fetch Comments
+    # Fetch Comments
     total_stored = 0
     for v_id in VIDEO_IDS:
         print(f"\nProcessing comments for video: {v_id}...")
         count = get_comments_and_save_to_mongo(youtube, v_id, MAX_RESULTS_PER_VIDEO)
         total_stored += count
 
-    # Step 3: Export
+    # Export
     export_to_csv_from_mongodb(OUTPUT_PATH)
     export_raw_to_json_from_mongodb(OUTPUT_JSON_PATH)
     print(f"\nFinal Count: {total_stored} comments stored in MongoDB.")
